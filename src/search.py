@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 search.py
 ---------
@@ -14,7 +16,7 @@ can be tested and changed independently.
 
 Typical usage
 -------------
-    from indexer import Indexer
+    from indexer import Indexer, PostingsList, SearchResult
     from search import SearchEngine
 
     indexer = Indexer()
@@ -26,9 +28,7 @@ Typical usage
 """
 
 import logging
-from typing import Optional
-
-from indexer import Indexer
+from indexer import Indexer, PostingsList, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class SearchEngine:
     # Public API
     # ------------------------------------------------------------------
 
-    def print_word(self, word: str) -> Optional[dict[str, dict]]:
+    def print_word(self, word: str) -> PostingsList | None:
         """
         Return (and pretty-print to stdout) the postings list for *word*.
 
@@ -114,7 +114,7 @@ class SearchEngine:
 
         return dict(sorted_postings)
 
-    def find(self, query_terms: list[str]) -> list[dict]:
+    def find(self, query_terms: list[str]) -> list[SearchResult]:
         """
         Find all pages containing **every** query term, ranked by TF-IDF.
 

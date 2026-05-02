@@ -56,7 +56,7 @@ HELP_TEXT: str = """
 # Shell
 # ---------------------------------------------------------------------------
 
-def run_shell(index_path: str, target_url: str) -> None:
+def run_shell(index_path: str, target_url: str, max_pages: int | None = None) -> None:
     """
     Start the interactive command-line shell.
 
@@ -75,7 +75,8 @@ def run_shell(index_path: str, target_url: str) -> None:
     engine = SearchEngine(indexer)
 
     print("  COMP3011 Search Engine Tool")
-    print(f"  Target: {target_url}  |  Index: {index_path}")
+    limit = str(max_pages) if max_pages is not None else "unlimited"
+    print(f"  Target: {target_url}  |  Index: {index_path}  |  Max pages: {limit}")
     print("  Type 'help' for available commands.\n")
 
     while True:
@@ -93,7 +94,7 @@ def run_shell(index_path: str, target_url: str) -> None:
         args = parts[1:]
 
         if command == "build":
-            _cmd_build(indexer, target_url, index_path)
+            _cmd_build(indexer, target_url, index_path, max_pages)
 
         elif command == "load":
             _cmd_load(indexer, index_path)
@@ -119,7 +120,7 @@ def run_shell(index_path: str, target_url: str) -> None:
 # Command handlers
 # ---------------------------------------------------------------------------
 
-def _cmd_build(indexer: Indexer, target_url: str, index_path: str) -> None:
+def _cmd_build(indexer: Indexer, target_url: str, index_path: str, max_pages: int | None = None) -> None:
     """
     Handle the ``build`` command.
 
@@ -135,11 +136,12 @@ def _cmd_build(indexer: Indexer, target_url: str, index_path: str) -> None:
     index_path : str
         Destination path for the saved index file.
     """
-    print(f"\n  Starting crawl of {target_url} ...")
+    limit_str = str(max_pages) if max_pages is not None else "unlimited"
+    print(f"\n  Starting crawl of {target_url} (max pages: {limit_str}) ...")
     print("  (Politeness window: 6 s between requests - this may take a few minutes)\n")
 
     try:
-        crawler = Crawler(target_url)
+        crawler = Crawler(target_url, max_pages=max_pages)
         pages = crawler.crawl()
     except Exception as exc:
         print(f"  [!] Crawl failed: {exc}\n")
@@ -257,6 +259,13 @@ def _parse_args() -> argparse.Namespace:
         help="Target URL to crawl with the 'build' command",
     )
     parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=None,
+        dest="max_pages",
+        help="Maximum number of pages to crawl (default: unlimited)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable DEBUG-level logging",
@@ -273,4 +282,4 @@ if __name__ == "__main__":
         datefmt="%H:%M:%S",
     )
 
-    run_shell(index_path=args.index, target_url=args.url)
+    run_shell(index_path=args.index, target_url=args.url, max_pages=args.max_pages)

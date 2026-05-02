@@ -18,6 +18,7 @@ Typical usage
 import logging
 import time
 import urllib.robotparser
+from typing import cast
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -49,6 +50,10 @@ class Crawler:
     max_retries : int
         Number of times to retry a failed request before giving up.
         Defaults to 3.
+    max_pages : int | None
+        Maximum number of pages to fetch.  ``None`` (default) means no
+        limit.  The crawl stops as soon as this many pages are stored,
+        even if the queue is non-empty.
 
     Attributes
     ----------
@@ -67,6 +72,7 @@ class Crawler:
     DEFAULT_POLITENESS_WINDOW: float = 6.0
     DEFAULT_TIMEOUT: float = 10.0
     DEFAULT_MAX_RETRIES: int = 3
+    DEFAULT_MAX_PAGES: int | None = None  # None = unlimited
 
     def __init__(
         self,
@@ -74,6 +80,7 @@ class Crawler:
         politeness_window: float = DEFAULT_POLITENESS_WINDOW,
         timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        max_pages: int | None = None,
     ) -> None:
         if politeness_window < 6.0:
             raise ValueError(
@@ -84,6 +91,7 @@ class Crawler:
         self.politeness_window: float = politeness_window
         self.timeout: float = timeout
         self.max_retries: int = max_retries
+        self.max_pages: int | None = max_pages
 
         # Restrict crawling to this domain
         parsed = urlparse(base_url)
@@ -163,6 +171,11 @@ class Crawler:
                 time.sleep(self.politeness_window)
             first_request = False
 
+            # Honour max_pages limit if set
+            if self.max_pages is not None and len(self.pages) >= self.max_pages:
+                logger.info("max_pages=%d reached — stopping crawl.", self.max_pages)
+                break
+
             html = self._fetch(url)
             if html is None:
                 continue  # error already logged inside _fetch
@@ -207,7 +220,8 @@ class Crawler:
             The response body as a string, or ``None`` on failure or
             robots.txt disallowance.
         """
-        user_agent = self._session.headers.get("User-Agent", "*")
+        raw_ua = self._session.headers.get("User-Agent", "*")
+        user_agent: str = raw_ua if isinstance(raw_ua, str) else raw_ua.decode()
         if not self._robots.can_fetch(user_agent, url):
             logger.warning("robots.txt disallows %s — skipping.", url)
             return None
@@ -266,7 +280,7 @@ class Crawler:
         links: list[str] = []
 
         for anchor in soup.find_all("a", href=True):
-            href: str = anchor["href"].strip()
+            href: str = cast(str, anchor["href"]).strip()
 
             # Skip fragment-only and javascript: links
             if not href or href.startswith("#") or href.startswith("javascript:"):

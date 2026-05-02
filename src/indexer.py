@@ -53,8 +53,29 @@ import math
 import re
 import string
 from pathlib import Path
+from typing import TypedDict
 
 from bs4 import BeautifulSoup
+
+# TypedDicts for the nested index structure — each field has an exact type,
+# allowing mypy --strict to verify all accesses throughout the codebase.
+
+class PostingStats(TypedDict):
+    """Per-word, per-page statistics stored in the inverted index."""
+    freq:      int
+    positions: list[int]
+    tf_idf:    float
+
+
+PostingsList = dict[str, PostingStats]
+InvertedIndex = dict[str, PostingsList]
+
+
+class SearchResult(TypedDict):
+    """Single result entry returned by :meth:`Indexer.find`."""
+    url:        str
+    score:      float
+    term_stats: PostingsList
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +104,7 @@ class Indexer:
     """
 
     def __init__(self) -> None:
-        self.index: dict[str, dict[str, dict]] = {}
+        self.index: InvertedIndex = {}
         self.is_built: bool = False
 
     # ------------------------------------------------------------------
@@ -193,7 +214,7 @@ class Indexer:
             "Index loaded from %s (%d terms).", path, len(self.index)
         )
 
-    def find(self, query_terms: list[str]) -> list[dict]:
+    def find(self, query_terms: list[str]) -> list[SearchResult]:
         """
         Return all pages that contain **every** term in *query_terms*,
         ranked by combined TF-IDF score (highest first).
@@ -252,25 +273,25 @@ class Indexer:
             return []
 
         # --- Score and collect results ---
-        results: list[dict] = []
+        results: list[SearchResult] = []
         for url in matching_urls:
             score = sum(
                 self.index[term][url].get("tf_idf", 0.0) for term in normalised
             )
-            term_stats = {
-                term: {
-                    "freq":      self.index[term][url]["freq"],
-                    "positions": self.index[term][url]["positions"],
-                    "tf_idf":    self.index[term][url].get("tf_idf", 0.0),
-                }
+            term_stats: PostingsList = {
+                term: PostingStats(
+                    freq=self.index[term][url]["freq"],
+                    positions=self.index[term][url]["positions"],
+                    tf_idf=self.index[term][url]["tf_idf"],
+                )
                 for term in normalised
             }
-            results.append({"url": url, "score": score, "term_stats": term_stats})
+            results.append(SearchResult(url=url, score=score, term_stats=term_stats))
 
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
 
-    def get_postings(self, word: str) -> dict[str, dict] | None:
+    def get_postings(self, word: str) -> PostingsList | None:
         """
         Return the postings list for a single *word*.
 
@@ -368,7 +389,7 @@ class Indexer:
                 self.index[token] = {}
 
             if url not in self.index[token]:
-                self.index[token][url] = {"freq": 0, "positions": []}
+                self.index[token][url] = {"freq": 0, "positions": [], "tf_idf": 0.0}
 
             self.index[token][url]["freq"] += 1
             self.index[token][url]["positions"].append(position)
