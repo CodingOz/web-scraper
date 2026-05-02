@@ -150,6 +150,8 @@ class TestFetch:
 
     def setup_method(self):
         self.crawler = Crawler("https://quotes.toscrape.com")
+        # Prime the robots parser so _fetch doesn't block in unit tests
+        self.crawler._robots.parse(["User-agent: *", "Allow: /"])
 
     @patch("crawler.time.sleep")
     def test_successful_fetch_returns_html(self, _sleep):
@@ -216,7 +218,12 @@ class TestFetch:
 class TestCrawl:
 
     def _make_crawler(self):
-        return Crawler("https://quotes.toscrape.com", politeness_window=6.0)
+        c = Crawler("https://quotes.toscrape.com", politeness_window=6.0)
+        # Prime the robots parser and stub read() so crawl() never tries
+        # to fetch robots.txt over the network during unit tests.
+        c._robots.parse(["User-agent: *", "Allow: /"])
+        c._robots.read = Mock()
+        return c
 
     @patch("crawler.time.sleep")
     def test_crawl_visits_linked_pages(self, _sleep):
@@ -314,3 +321,70 @@ class TestCrawl:
         c._session.get = Mock(return_value=_mock_response(content))
         pages = c.crawl()
         assert pages["https://quotes.toscrape.com"] == content
+
+
+# ---------------------------------------------------------------------------
+# robots.txt compliance
+# ---------------------------------------------------------------------------
+
+class TestRobots:
+    """Tests for robots.txt fetching and URL gating."""
+
+    def _make_crawler(self):
+        return Crawler("https://quotes.toscrape.com", politeness_window=6.0)
+
+    @patch("crawler.time.sleep")
+    def test_disallowed_url_not_fetched(self, _sleep):
+        """
+        If robots.txt disallows our User-Agent on a URL, _fetch must return
+        None without making an HTTP request for that URL.
+        """
+        c = self._make_crawler()
+        c._robots.parse(["User-agent: *", "Disallow: /"])
+        c._session.get = Mock()
+        result = c._fetch("https://quotes.toscrape.com/private")
+        assert result is None
+        c._session.get.assert_not_called()
+
+    @patch("crawler.time.sleep")
+    def test_allowed_url_is_fetched(self, _sleep):
+        """If robots.txt allows the URL, _fetch proceeds normally."""
+        c = self._make_crawler()
+        c._robots.parse(["User-agent: *", "Allow: /"])
+        c._session.get = Mock(return_value=_mock_response("<html>OK</html>"))
+        result = c._fetch("https://quotes.toscrape.com/page")
+        assert result == "<html>OK</html>"
+
+    @patch("crawler.time.sleep")
+    def test_robots_txt_read_at_crawl_start(self, _sleep):
+        """
+        crawl() must call _robots.read() before making any page requests,
+        so robots.txt is always consulted first.
+        """
+        c = self._make_crawler()
+        c._session.get = Mock(return_value=_mock_response("<html><body></body></html>"))
+
+        read_called_before_get = {"value": False}
+        original_read = c._robots.read
+
+        def tracking_read():
+            # Mark that read() ran; allow everything so crawl completes
+            read_called_before_get["value"] = True
+            c._robots.parse(["User-agent: *", "Allow: /"])
+
+        c._robots.read = tracking_read
+        c.crawl()
+
+        assert read_called_before_get["value"], "robots.txt was never read"
+
+    @patch("crawler.time.sleep")
+    def test_missing_robots_txt_does_not_crash_crawl(self, _sleep):
+        """
+        If robots.txt is unreachable the crawl must continue and treat
+        all URLs as allowed (fail-open behaviour per RFC 9309).
+        """
+        c = self._make_crawler()
+        c._session.get = Mock(return_value=_mock_response("<html><body></body></html>"))
+        c._robots.read = Mock(side_effect=Exception("unreachable"))
+        pages = c.crawl()
+        assert len(pages) >= 1

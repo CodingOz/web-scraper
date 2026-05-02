@@ -17,6 +17,7 @@ Typical usage
 
 import logging
 import time
+import urllib.robotparser
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -100,6 +101,11 @@ class Crawler:
             {"User-Agent": "COMP3011-SearchBot/1.0 (educational project)"}
         )
 
+        # robots.txt parser — populated at the start of crawl()
+        self._robots: urllib.robotparser.RobotFileParser = (
+            urllib.robotparser.RobotFileParser()
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -128,6 +134,19 @@ class Crawler:
         self._visited.clear()
         self._queue.clear()
         self.pages.clear()
+
+        # Fetch and parse robots.txt once before any other request.
+        # If the file is absent or unreachable we treat all URLs as allowed,
+        # which matches the behaviour of major crawlers (RFC 9309 s2.3).
+        robots_url = f"{self._allowed_scheme}://{self._allowed_netloc}/robots.txt"
+        self._robots.set_url(robots_url)
+        try:
+            self._robots.read()
+            logger.info("robots.txt loaded from %s", robots_url)
+        except Exception as exc:
+            logger.warning("Could not load robots.txt (%s) — proceeding without it.", exc)
+            # Fail-open: treat all URLs as allowed (RFC 9309 §2.3)
+            self._robots.parse(["User-agent: *", "Allow: /"])
 
         self._enqueue(self.base_url)
         first_request = True
@@ -172,6 +191,11 @@ class Crawler:
         """
         Fetch a single URL with retry logic.
 
+        Respects robots.txt: if the parser has been loaded and the
+        configured User-Agent is disallowed from *url*, the method logs a
+        warning and returns ``None`` immediately without making a network
+        request.
+
         Parameters
         ----------
         url : str
@@ -180,8 +204,14 @@ class Crawler:
         Returns
         -------
         str | None
-            The response body as a string, or ``None`` on failure.
+            The response body as a string, or ``None`` on failure or
+            robots.txt disallowance.
         """
+        user_agent = self._session.headers.get("User-Agent", "*")
+        if not self._robots.can_fetch(user_agent, url):
+            logger.warning("robots.txt disallows %s — skipping.", url)
+            return None
+
         for attempt in range(1, self.max_retries + 1):
             try:
                 response = self._session.get(url, timeout=self.timeout)
