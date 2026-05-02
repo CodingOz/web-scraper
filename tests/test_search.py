@@ -22,8 +22,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from scr.indexer import Indexer
-from scr.search import SearchEngine
+from indexer import Indexer
+from search import SearchEngine
 
 
 # ---------------------------------------------------------------------------
