@@ -489,7 +489,12 @@ class Indexer:
             *token* contained only punctuation or whitespace.
         """
         normalised = token.lower().strip(_STRIP_CHARS)
-        if self.stem and normalised:
+        if self.stem and normalised and normalised.isalpha():
+            # Only stem purely alphabetic tokens.  Porter is designed for
+            # natural-language words and is not idempotent on alphanumeric
+            # strings (e.g. 'u0se' → 'u0s' → 'u0').  Skipping stemming for
+            # mixed tokens matches real search-engine practice: years, codes,
+            # and identifiers like '1984' or 'py3' are indexed verbatim.
             normalised = self._stemmer.stem(normalised)
         return normalised
 
