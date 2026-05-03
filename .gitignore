@@ -1,3 +1,8 @@
-*.pyc
 __pycache__/
-*.json
+*.pyc
+htmlcov/
+.coverage
+coverage.xml
+venv/
+.vscode/
+*.egg-info/
