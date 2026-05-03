@@ -346,13 +346,16 @@ pytest tests/ -v --cov=src --cov-report=term-missing
 | `test_property.py` | 16 | Hypothesis invariants: freq conservation, position structure, TF-IDF non-negativity, `find` subset |
 | `test_new_features.py` | 35 | Stemming behaviour, phrase adjacency/ordering, robots `can_fetch` mock, `--max-pages` enforcement |
 
-**Coverage:**
+**Coverage achieved:**
 
-| Module | Coverage |
-|---|---|
-| `crawler.py` | 99% |
-| `indexer.py` | 99% |
-| `search.py` | 100% |
+| Module       | Coverage |
+|--------------|----------|
+| `crawler.py` | 99%      |
+| `indexer.py` | 99%      |
+| `search.py`  | 100%     |
+| `main.py`    | excluded (CLI glue, exercised via integration tests) |
+
+200 tests across 6 files; overall coverage of tested modules: 99.1%.
 
 **Testing strategy:**
 
