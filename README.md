@@ -1,9 +1,13 @@
 # COMP3011 Search Engine Tool
 
+[![Tests](https://github.com/CodingOz/web-scraper/actions/workflows/test.yml/badge.svg)](https://github.com/CodingOz/web-scraper/actions/workflows/test.yml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
+[![Checked with mypy](https://img.shields.io/badge/mypy-strict-2a6db2)](https://mypy.readthedocs.io/)
+
 A command-line search engine that crawls [quotes.toscrape.com](https://quotes.toscrape.com), builds a TF-IDF weighted inverted index, and lets you query it interactively — all in Python.
 
 ---
-    
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -14,6 +18,7 @@ A command-line search engine that crawls [quotes.toscrape.com](https://quotes.to
 - [Commands](#commands)
 - [Project Structure](#project-structure)
 - [Testing](#testing)
+- [CI / GitHub Actions](#ci--github-actions)
 - [Dependencies](#dependencies)
 
 ---
@@ -140,8 +145,8 @@ TF-IDF = TF × IDF
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/<your-username>/<repo-name>.git
-cd <repo-name>
+git clone https://github.com/CodingOz/web-scraper.git
+cd web-scraper
 
 # 2. (Recommended) Create a virtual environment
 python -m venv venv
@@ -308,6 +313,26 @@ pytest tests/ -v --cov=src --cov-report=term-missing
 - **Edge cases covered** — empty pages, punctuation-only tokens, words not in the index, empty queries, whitespace-only queries, case variations, pages that fail to fetch mid-crawl, retry exhaustion, and URL deduplication.
 - **`MagicMock(spec=Indexer)`** — the `spec=` parameter means mocks raise `AttributeError` if code calls a method that doesn't exist on the real class, catching interface mismatches that plain `Mock()` would miss silently.
 - **`capsys` for output testing** — pytest's built-in stdout capture verifies the human-readable output of `print_word` and `find` without coupling tests to exact string formatting.
+
+---
+
+## CI / GitHub Actions
+
+Every push triggers the workflow defined in `.github/workflows/test.yml`:
+
+| Step | What it does |
+|---|---|
+| **mypy --strict** | Type-checks all four source files; fails the build on any error |
+| **pytest --cov** | Runs all 165 tests across Python 3.11 and 3.12 |
+| **Upload artifact** | Saves `coverage.xml` so coverage history is visible per run |
+
+The matrix runs both Python versions in parallel with `fail-fast: false` so you see all failures at once rather than stopping at the first broken version.
+
+**Tagging a release**:
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0 — full feature set"
+git push origin v1.0.0
+```
 
 ---
 
