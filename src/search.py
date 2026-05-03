@@ -229,6 +229,7 @@ class SearchEngine:
             for term, stats in result["term_stats"].items():
                 print(
                     f"          '{term}': freq={stats['freq']}, "
+                    f"tf-idf={stats['tf_idf']:.4f}, "
                     f"positions={stats['positions'][:5]}"
                     + (" …" if len(stats["positions"]) > 5 else "")
                 )
