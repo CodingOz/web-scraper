@@ -390,10 +390,19 @@ git push origin v1.0.0
 ## Dependencies
 
 ```
+# Runtime
 requests>=2.31.0
 beautifulsoup4>=4.12.0
-pytest>=7.4.0         # testing only
-pytest-cov>=4.1.0     # coverage reporting only
+nltk>=3.8.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+hypothesis>=6.100.0
+
+# Type checking
+mypy>=1.8.0
+types-requests>=2.31.0
 ```
 
 Install all dependencies:
