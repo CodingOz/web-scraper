@@ -46,6 +46,7 @@ HELP_TEXT: str = """
   load                Load a previously saved index from disk
   print <word>        Show inverted index entry for <word>
   find <term> …       Find pages containing ALL given terms
+  phrase <term> …     Find pages where terms appear consecutively
   help                Show this help message
   quit / exit         Exit the search tool
   ───────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ HELP_TEXT: str = """
 # Shell
 # ---------------------------------------------------------------------------
 
-def run_shell(index_path: str, target_url: str, max_pages: int | None = None) -> None:
+def run_shell(index_path: str, target_url: str, max_pages: int | None = None, stem: bool = False) -> None:
     """
     Start the interactive command-line shell.
 
@@ -71,12 +72,13 @@ def run_shell(index_path: str, target_url: str, max_pages: int | None = None) ->
     target_url : str
         Root URL to crawl when the ``build`` command is issued.
     """
-    indexer = Indexer()
+    indexer = Indexer(stem=stem)
     engine = SearchEngine(indexer)
 
     print("  COMP3011 Search Engine Tool")
     limit = str(max_pages) if max_pages is not None else "unlimited"
-    print(f"  Target: {target_url}  |  Index: {index_path}  |  Max pages: {limit}")
+    stem_label = "on" if stem else "off"
+    print(f"  Target: {target_url}  |  Index: {index_path}  |  Max pages: {limit}  |  Stemming: {stem_label}")
     print("  Type 'help' for available commands.\n")
 
     while True:
@@ -104,6 +106,9 @@ def run_shell(index_path: str, target_url: str, max_pages: int | None = None) ->
 
         elif command == "find":
             _cmd_find(engine, args)
+
+        elif command == "phrase":
+            _cmd_phrase(engine, args)
 
         elif command == "help":
             print(HELP_TEXT)
@@ -194,6 +199,31 @@ def _cmd_load(indexer: Indexer, index_path: str) -> None:
         print(f"  [!] Failed to load index: {exc}\n")
 
 
+def _cmd_phrase(engine: SearchEngine, args: list[str]) -> None:
+    """
+    Handle the ``phrase <term> [<term> ...]`` command.
+
+    Unlike ``find``, which uses AND semantics (all terms present anywhere
+    on the page), ``phrase`` requires the terms to be adjacent and in the
+    given order.
+
+    Parameters
+    ----------
+    engine : SearchEngine
+        The active SearchEngine instance.
+    args : list[str]
+        Ordered phrase terms following the ``phrase`` keyword.
+    """
+    if not args:
+        print("  Usage: phrase <term> [<term> ...]\n")
+        return
+
+    try:
+        engine.find_phrase(args)
+    except RuntimeError as exc:
+        print(f"  [!] {exc}\n")
+
+
 def _cmd_print(engine: SearchEngine, args: list[str]) -> None:
     """
     Handle the ``print <word>`` command.
@@ -266,6 +296,11 @@ def _parse_args() -> argparse.Namespace:
         help="Maximum number of pages to crawl (default: unlimited)",
     )
     parser.add_argument(
+        "--stem",
+        action="store_true",
+        help="Enable Porter stemming for indexing and queries",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable DEBUG-level logging",
@@ -282,4 +317,4 @@ if __name__ == "__main__":
         datefmt="%H:%M:%S",
     )
 
-    run_shell(index_path=args.index, target_url=args.url, max_pages=args.max_pages)
+    run_shell(index_path=args.index, target_url=args.url, max_pages=args.max_pages, stem=args.stem)

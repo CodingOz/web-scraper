@@ -26,6 +26,9 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from indexer import Indexer
+from search import SearchEngine
+from unittest.mock import MagicMock
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -399,3 +402,155 @@ class TestFind:
         mixed = idx.find(["Fox"])
         assert [r["url"] for r in lower] == [r["url"] for r in upper]
         assert [r["url"] for r in lower] == [r["url"] for r in mixed]
+
+
+# ---------------------------------------------------------------------------
+# find_phrase() — Indexer
+# ---------------------------------------------------------------------------
+
+class TestFindPhrase:
+    """Tests for positional phrase search."""
+
+    # Pages where "good friends" appears as an exact adjacent pair
+    PHRASE_PAGES = {
+        "http://x.com/match":
+            "<html><body>they are good friends forever</body></html>",
+        "http://x.com/no-match":
+            "<html><body>friends are good to have around</body></html>",
+        "http://x.com/single":
+            "<html><body>good times with everyone</body></html>",
+        "http://x.com/reversed":
+            "<html><body>friends are never good to lose</body></html>",
+    }
+
+    def _idx(self) -> Indexer:
+        idx = Indexer()
+        idx.build(self.PHRASE_PAGES)
+        return idx
+
+    def test_exact_phrase_returns_correct_page(self):
+        results = self._idx().find_phrase(["good", "friends"])
+        assert len(results) == 1
+        assert results[0]["url"] == "http://x.com/match"
+
+    def test_reversed_phrase_does_not_match(self):
+        """'friends good' must not match 'good friends'."""
+        results = self._idx().find_phrase(["friends", "good"])
+        # 'reversed' page has "friends are never good" — not adjacent
+        assert all(r["url"] != "http://x.com/match" for r in results)
+
+    def test_words_present_but_not_adjacent_excluded(self):
+        """'no-match' has both words but in wrong order / not adjacent."""
+        results = self._idx().find_phrase(["good", "friends"])
+        urls = [r["url"] for r in results]
+        assert "http://x.com/no-match" not in urls
+
+    def test_single_term_phrase_behaves_like_find(self):
+        """A one-word phrase is just a regular lookup."""
+        idx = self._idx()
+        phrase = idx.find_phrase(["good"])
+        find   = idx.find(["good"])
+        assert {r["url"] for r in phrase} == {r["url"] for r in find}
+
+    def test_three_term_phrase_correct(self):
+        pages = {
+            "http://x.com/a": "<html><body>the quick brown fox jumps</body></html>",
+            "http://x.com/b": "<html><body>quick fox brown is not here</body></html>",
+        }
+        idx = Indexer()
+        idx.build(pages)
+        # "quick brown fox" appears in /a but not /b
+        results = idx.find_phrase(["quick", "brown", "fox"])
+        urls = [r["url"] for r in results]
+        assert "http://x.com/a" in urls
+        assert "http://x.com/b" not in urls
+
+    def test_empty_phrase_returns_empty(self):
+        assert self._idx().find_phrase([]) == []
+
+    def test_missing_term_returns_empty(self):
+        assert self._idx().find_phrase(["good", "zzznothere"]) == []
+
+    def test_phrase_not_in_index_returns_empty(self):
+        assert self._idx().find_phrase(["zzzaaa", "zzzbbb"]) == []
+
+    def test_results_sorted_by_tfidf(self):
+        pages = {
+            "http://x.com/a": "<html><body>good friends good friends</body></html>",
+            "http://x.com/b": "<html><body>good friends here</body></html>",
+            "http://x.com/c": "<html><body>unrelated content here</body></html>",
+        }
+        idx = Indexer()
+        idx.build(pages)
+        results = idx.find_phrase(["good", "friends"])
+        scores = [r["score"] for r in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_result_keys_present(self):
+        results = self._idx().find_phrase(["good", "friends"])
+        assert len(results) > 0
+        for r in results:
+            assert "url" in r
+            assert "score" in r
+            assert "term_stats" in r
+
+    def test_phrase_before_build_returns_empty(self):
+        idx = Indexer()
+        assert idx.find_phrase(["good", "friends"]) == []
+
+    def test_case_insensitive_phrase(self):
+        idx = self._idx()
+        lower = idx.find_phrase(["good", "friends"])
+        upper = idx.find_phrase(["GOOD", "FRIENDS"])
+        assert {r["url"] for r in lower} == {r["url"] for r in upper}
+
+
+# ---------------------------------------------------------------------------
+# find_phrase() — SearchEngine
+# ---------------------------------------------------------------------------
+
+class TestSearchEngineFindPhrase:
+    """Tests for the SearchEngine.find_phrase() presentation wrapper."""
+
+    PAGES = {
+        "http://x.com/p1": "<html><body>good friends are valuable</body></html>",
+        "http://x.com/p2": "<html><body>friends are good people always</body></html>",
+        "http://x.com/p3": "<html><body>something entirely different here</body></html>",
+    }
+
+    def _engine(self) -> SearchEngine:
+        idx = Indexer()
+        idx.build(self.PAGES)
+        return SearchEngine(idx)
+
+    def test_raises_if_not_built(self):
+        engine = SearchEngine(Indexer())
+        with pytest.raises(RuntimeError, match="not available"):
+            engine.find_phrase(["good", "friends"])
+
+    def test_returns_correct_page(self):
+        results = self._engine().find_phrase(["good", "friends"])
+        assert len(results) == 1
+        assert results[0]["url"] == "http://x.com/p1"
+
+    def test_empty_terms_returns_empty(self, capsys):
+        results = self._engine().find_phrase([])
+        assert results == []
+        assert "No phrase terms" in capsys.readouterr().out
+
+    def test_no_match_prints_message(self, capsys):
+        self._engine().find_phrase(["zzz", "yyy"])
+        out = capsys.readouterr().out
+        assert "No pages found" in out
+
+    def test_output_shows_url(self, capsys):
+        self._engine().find_phrase(["good", "friends"])
+        assert "http://x.com/p1" in capsys.readouterr().out
+
+    def test_delegates_to_indexer(self):
+        idx = MagicMock(spec=Indexer)
+        idx.is_built = True
+        idx.find_phrase.return_value = []
+        engine = SearchEngine(idx)
+        engine.find_phrase(["good", "friends"])
+        idx.find_phrase.assert_called_once_with(["good", "friends"])

@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from bs4 import BeautifulSoup
+from nltk.stem import PorterStemmer  # type: ignore[import-untyped]
 
 # TypedDicts for the nested index structure — each field has an exact type,
 # allowing mypy --strict to verify all accesses throughout the codebase.
@@ -92,7 +93,12 @@ class Indexer:
 
     Parameters
     ----------
-    None — all configuration is done via method arguments.
+    stem : bool
+        When ``True``, tokens are reduced to their Porter stem before
+        indexing and before every query lookup.  This means a search for
+        ``"running"`` will also match pages containing ``"runs"`` or
+        ``"runner"`` because all three stem to ``"run"``.
+        Defaults to ``False`` so the default behaviour is unchanged.
 
     Attributes
     ----------
@@ -101,11 +107,18 @@ class Indexer:
     is_built : bool
         ``True`` after :meth:`build` or :meth:`load` has been called
         successfully.
+    stem : bool
+        Whether stemming is active for this instance.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, stem: bool = False) -> None:
         self.index: InvertedIndex = {}
         self.is_built: bool = False
+        self.stem: bool = stem
+        # Single stemmer instance — PorterStemmer is stateless so one
+        # object shared across all calls is safe and avoids repeated
+        # construction overhead.
+        self._stemmer: PorterStemmer = PorterStemmer()
 
     # ------------------------------------------------------------------
     # Public API
@@ -291,6 +304,105 @@ class Indexer:
         results.sort(key=lambda r: r["score"], reverse=True)
         return results
 
+
+    def find_phrase(self, phrase_terms: list[str]) -> list[SearchResult]:
+        """
+        Return pages where *phrase_terms* appear as a consecutive sequence.
+
+        This is a positional phrase query.  A page qualifies only when there
+        exists at least one token offset ``p`` such that the first term
+        appears at ``p``, the second at ``p+1``, the third at ``p+2``, and
+        so on.  Term order matters: ``["good", "friends"]`` does **not**
+        match a page where "friends" precedes "good".
+
+        Algorithm
+        ---------
+        1. Normalise all terms (lowercase, strip punctuation).
+        2. Intersect postings lists — any URL missing even one term is
+           eliminated immediately (same AND shortcut used by :meth:`find`).
+        3. For each surviving URL, convert the first term's position list to
+           a ``set`` for O(1) lookup, then slide along the phrase: for each
+           candidate start position ``p`` of term[0], check that ``p+i``
+           exists in the position set of term[i] for every subsequent ``i``.
+        4. If any start position satisfies the full phrase, score and collect
+           the result using the same TF-IDF sum as :meth:`find`.
+
+        Complexity
+        ----------
+        O(P₀ × N) per URL, where P₀ is the number of occurrences of the
+        first term and N is the phrase length.  Using sets for every term's
+        positions reduces each adjacency check to O(1).
+
+        Parameters
+        ----------
+        phrase_terms : list[str]
+            Ordered list of terms forming the phrase (case-insensitive).
+            A single-term phrase behaves identically to :meth:`find`.
+
+        Returns
+        -------
+        list[SearchResult]
+            Matching pages sorted by combined TF-IDF score descending.
+            Empty list if no pages match, the index is not built, or the
+            phrase list is empty.
+
+        Examples
+        --------
+        >>> results = indexer.find_phrase(["good", "friends"])
+        >>> for r in results:
+        ...     print(r["url"], r["score"])
+        """
+        if not self.is_built:
+            logger.warning("find_phrase() called before index was built/loaded.")
+            return []
+
+        if not phrase_terms:
+            return []
+
+        normalised: list[str] = [self._normalise_token(t) for t in phrase_terms]
+        normalised = [t for t in normalised if t]
+
+        if not normalised:
+            return []
+
+        # Step 1 — URL intersection (same as find())
+        candidate_sets: list[set[str]] = []
+        for term in normalised:
+            if term not in self.index:
+                return []
+            candidate_sets.append(set(self.index[term].keys()))
+
+        matching_urls: set[str] = candidate_sets[0].intersection(*candidate_sets[1:])
+
+        # Step 2 — Positional adjacency check
+        results: list[SearchResult] = []
+        for url in matching_urls:
+            # Build a set of positions for each term on this page — O(1) lookup
+            pos_sets: list[set[int]] = [
+                set(self.index[term][url]["positions"]) for term in normalised
+            ]
+            # Slide over every start position of the first term
+            phrase_found = any(
+                all(p + i in pos_sets[i] for i in range(1, len(normalised)))
+                for p in pos_sets[0]
+            )
+            if not phrase_found:
+                continue
+
+            score = sum(self.index[term][url]["tf_idf"] for term in normalised)
+            term_stats: PostingsList = {
+                term: PostingStats(
+                    freq=self.index[term][url]["freq"],
+                    positions=self.index[term][url]["positions"],
+                    tf_idf=self.index[term][url]["tf_idf"],
+                )
+                for term in normalised
+            }
+            results.append(SearchResult(url=url, score=score, term_stats=term_stats))
+
+        results.sort(key=lambda r: r["score"], reverse=True)
+        return results
+
     def get_postings(self, word: str) -> PostingsList | None:
         """
         Return the postings list for a single *word*.
@@ -355,10 +467,15 @@ class Indexer:
 
         return tokens
 
-    @staticmethod
-    def _normalise_token(token: str) -> str:
+    def _normalise_token(self, token: str) -> str:
         """
-        Lowercase and strip surrounding punctuation from *token*.
+        Lowercase, strip surrounding punctuation, and optionally stem *token*.
+
+        Stemming is applied after case-normalisation and punctuation stripping
+        so the stemmer always receives clean lowercase input.  The Porter
+        algorithm is used: it is fast (O(word-length)), deterministic, and
+        well-understood — a deliberate choice over more aggressive stemmers
+        like Lancaster, which can over-stem to the point of losing meaning.
 
         Parameters
         ----------
@@ -368,10 +485,13 @@ class Indexer:
         Returns
         -------
         str
-            Normalised token, possibly empty if *token* contained only
-            punctuation or whitespace.
+            Normalised (and optionally stemmed) token, possibly empty if
+            *token* contained only punctuation or whitespace.
         """
-        return token.lower().strip(_STRIP_CHARS)
+        normalised = token.lower().strip(_STRIP_CHARS)
+        if self.stem and normalised:
+            normalised = self._stemmer.stem(normalised)
+        return normalised
 
     def _index_page(self, url: str, tokens: list[str]) -> None:
         """

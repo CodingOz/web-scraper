@@ -175,6 +175,69 @@ class SearchEngine:
 
         return results
 
+
+    def find_phrase(self, phrase_terms: list[str]) -> list[SearchResult]:
+        """
+        Find pages where *phrase_terms* appear as consecutive tokens.
+
+        Corresponds to the CLI ``phrase <term> [<term> …]`` command.
+
+        Unlike :meth:`find` (AND semantics), this requires the terms to be
+        adjacent and in the given order — ``phrase good friends`` only matches
+        pages where "good" is immediately followed by "friends" in the text.
+
+        Parameters
+        ----------
+        phrase_terms : list[str]
+            Ordered phrase terms (case-insensitive).
+
+        Returns
+        -------
+        list[SearchResult]
+            Matching pages sorted by TF-IDF score descending.
+
+        Side-effects
+        ------------
+        Prints a formatted results table to stdout.
+        """
+        self._require_index()
+
+        clean_terms = [t.strip() for t in phrase_terms if t.strip()]
+
+        if not clean_terms:
+            print("  [!] No phrase terms provided.")
+            return []
+
+        phrase_display = " ".join(f"'{t}'" for t in clean_terms)
+        print(f"\n  Searching for phrase: {phrase_display}")
+
+        results = self.indexer.find_phrase(clean_terms)
+
+        if not results:
+            print(f"  No pages found containing the phrase: {phrase_display}\n")
+            return []
+
+        print(f"  {'─' * 64}")
+        print(f"  {'Rank':<5}  {'Score':>7}  URL")
+        print(f"  {'─' * 64}")
+
+        for rank, result in enumerate(results, start=1):
+            url = result["url"]
+            score = result["score"]
+            display_url = url if len(url) <= 50 else "…" + url[-49:]
+            print(f"  {rank:<5}  {score:>7.4f}  {display_url}")
+            for term, stats in result["term_stats"].items():
+                print(
+                    f"          '{term}': freq={stats['freq']}, "
+                    f"positions={stats['positions'][:5]}"
+                    + (" …" if len(stats["positions"]) > 5 else "")
+                )
+
+        print(f"  {'─' * 64}")
+        print(f"  {len(results)} page(s) found.\n")
+
+        return results
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
